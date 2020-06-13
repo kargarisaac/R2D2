@@ -8,14 +8,21 @@ Transition = namedtuple('Transition', ('state', 'next_state', 'action', 'reward'
 
 
 class LocalBuffer(object):
-    def __init__(self):
+    def __init__(self, observation_size):
+        self.observation_size = observation_size
         self.n_step_memory = []
         self.local_memory = []
         self.memory = []
         self.over_lapping_from_prev = []
 
     def push(self, state, next_state, action, reward, mask, rnn_state):
+        """
+        push new data into n_step_memory and if it is full or if the episode is doen -> 
+        creqate one sample from this n_step data and push it into local_memory
+        """
         self.n_step_memory.append([state, next_state, action, reward, mask, rnn_state])
+
+        # if we collected s_step transitions or if the episode is done -> creqate one sample from this n_step data and push it into local memory
         if len(self.n_step_memory) == n_step or mask == 0:
             [state, _, action, _, _, rnn_state] = self.n_step_memory[0]
             [_, next_state, _, _, mask, _] = self.n_step_memory[-1]
@@ -31,19 +38,23 @@ class LocalBuffer(object):
 
     
     def push_local_memory(self, state, next_state, action, reward, mask, step, rnn_state):
+        """
+        store data calculated from n_step to local_memory and add local_memory+over_lap_from_prev to memory if we have sequence_length data .
+        So self.memory will contain sequences of Transition namedtupples
+        """
         self.local_memory.append(Transition(state, next_state, action, reward, mask, step, torch.stack(rnn_state).view(2, -1)))
         if (len(self.local_memory) + len(self.over_lapping_from_prev)) == sequence_length or mask == 0:
             self.local_memory = self.over_lapping_from_prev + self.local_memory
             length = len(self.local_memory)
             while len(self.local_memory) < sequence_length:
                 self.local_memory.append(Transition(
-                    torch.Tensor([0, 0]),
-                    torch.Tensor([0, 0]),
+                    torch.Tensor(torch.zeros(self.observation_size)),
+                    torch.Tensor(torch.zeros(self.observation_size)),
                     0,
                     0,
                     0,
                     0,
-                    torch.zeros([2, 1, 16]).view(2, -1)
+                    torch.zeros([2, 1, self.observation_size]).view(2, -1)
                 ))
             self.memory.append([self.local_memory, length])
             if mask == 0:
@@ -80,16 +91,22 @@ class Memory(object):
         self.memory_probability = deque(maxlen=capacity)
 
     def td_error_to_prior(self, td_error, lengths):
+        """
+        calculate priority based on td_error
+        """
         abs_td_error_sum  = td_error.abs().sum(dim=1, keepdim=True).view(-1).detach().numpy()
-        lengths_burn = [length - burn_in_length for length in lengths]
+        lengths_burn = np.array([max(1, length - burn_in_length) for length in lengths])
 
         prior_max = td_error.abs().max(dim=1, keepdim=True)[0].view(-1).detach().numpy()
 
-        prior_mean = abs_td_error_sum / lengths_burn
+        prior_mean = abs_td_error_sum / (lengths_burn) #+ 1e-10)
         prior = eta * prior_max + (1 - eta) * prior_mean
         return prior
 
     def push(self, td_error, batch, lengths):
+        """
+        store data and priority
+        """
         # batch.state[local_mini_batch, sequence_length, item]
         prior = self.td_error_to_prior(td_error, lengths)
         
@@ -98,6 +115,9 @@ class Memory(object):
             self.memory_probability.append(prior[i])
         
     def sample(self, batch_size):
+        """
+        sample data from memory based on priority
+        """
         probability = np.array(self.memory_probability)
         probability = probability / probability.sum()
 

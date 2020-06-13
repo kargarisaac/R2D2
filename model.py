@@ -5,15 +5,15 @@ import torch.nn.functional as F
 from config import gamma, device, batch_size, sequence_length, burn_in_length
 
 class R2D2(nn.Module):
-    def __init__(self, num_inputs, num_outputs):
+    def __init__(self, num_inputs, num_outputs, hidden_size=16):
         super(R2D2, self).__init__()
         self.num_inputs = num_inputs
         self.num_outputs = num_outputs
 
-        self.lstm = nn.LSTM(input_size=num_inputs, hidden_size=16, batch_first=True)
-        self.fc = nn.Linear(16, 128)
-        self.fc_adv = nn.Linear(128, num_outputs)
-        self.fc_val = nn.Linear(128, 1)
+        self.lstm = nn.LSTM(input_size=num_inputs, hidden_size=hidden_size, batch_first=True)
+        self.fc = nn.Linear(hidden_size, hidden_size)
+        self.fc_adv = nn.Linear(hidden_size, num_outputs)
+        self.fc_val = nn.Linear(hidden_size, 1)
 
         for m in self.modules():
             if isinstance(m, nn.Linear):
@@ -31,6 +31,7 @@ class R2D2(nn.Module):
         val = self.fc_val(out)
         val = val.view(batch_size, sequence_length, 1)
 
+        #dueling dqn part
         qvalue = val + (adv - adv.mean(dim=2, keepdim=True))
 
         return qvalue, hidden
