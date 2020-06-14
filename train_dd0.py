@@ -23,6 +23,7 @@ from deepdrive_zero.constants import COMFORTABLE_STEERING_ACTIONS, \
 
 
 def get_action(state, target_net, epsilon, env, hidden):
+    # epsilon greedy action selection
     action, hidden = target_net.get_action(state, hidden)
     
     if np.random.rand() <= epsilon:
@@ -60,8 +61,10 @@ def main():
     print('state size:', num_inputs)
     print('action size:', num_actions)
 
-    online_net = R2D2(num_inputs, num_actions, 128)
-    target_net = R2D2(num_inputs, num_actions, 128)
+    hidden_size = 128
+
+    online_net = R2D2(num_inputs, num_actions, hidden_size)
+    target_net = R2D2(num_inputs, num_actions, hidden_size)
     update_target_model(online_net, target_net)
 
     optimizer = optim.Adam(online_net.parameters(), lr=lr)
@@ -76,7 +79,7 @@ def main():
     epsilon = 1.0
     steps = 0
     loss = 0
-    local_buffer = LocalBuffer(num_inputs)
+    local_buffer = LocalBuffer(num_inputs, hidden_size)
 
     #=========== training loop =============
     for e in range(30000):

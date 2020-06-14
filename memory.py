@@ -8,8 +8,9 @@ Transition = namedtuple('Transition', ('state', 'next_state', 'action', 'reward'
 
 
 class LocalBuffer(object):
-    def __init__(self, observation_size):
+    def __init__(self, observation_size, hidden_size):
         self.observation_size = observation_size
+        self.hidden_size = hidden_size
         self.n_step_memory = []
         self.local_memory = []
         self.memory = []
@@ -54,7 +55,7 @@ class LocalBuffer(object):
                     0,
                     0,
                     0,
-                    torch.zeros([2, 1, self.observation_size]).view(2, -1)
+                    torch.zeros([2, 1, 128]).view(2, -1)
                 ))
             self.memory.append([self.local_memory, length])
             if mask == 0:
