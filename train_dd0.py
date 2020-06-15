@@ -12,11 +12,12 @@ from model import R2D2
 from memory import Memory, LocalBuffer
 from tensorboardX import SummaryWriter
 
-from config import initial_exploration, batch_size, update_target, goal_score, log_interval, device, replay_memory_capacity, lr, sequence_length, local_mini_batch, env_config
+from config import initial_exploration, batch_size, update_target, goal_score, log_interval, device, replay_memory_capacity, \
+ lr, sequence_length, local_mini_batch, env_config, resume, epsilon_scratch, epsilon_resume, epsilon_final, epsilon_step
 
 from collections import deque
 
-sys.path.append('/home/isaac/codes/deepdrive-zero/')
+sys.path.append('/home/kargarisaac/codes/deepdrive-zero/')
 from deepdrive_zero.envs.env import Deepdrive2DEnv
 from deepdrive_zero.constants import COMFORTABLE_STEERING_ACTIONS, \
     COMFORTABLE_ACTIONS
@@ -38,7 +39,7 @@ def update_target_model(online_net, target_net):
 
 def main():
     # env = gym.make(env_name)
-    env = Deepdrive2DEnv(is_intersection_map=True)
+    env = Deepdrive2DEnv(is_intersection_map=False)
     env.configure_env(env_config)
 
     #========= set path variables ============
@@ -65,6 +66,10 @@ def main():
 
     online_net = R2D2(num_inputs, num_actions, hidden_size)
     target_net = R2D2(num_inputs, num_actions, hidden_size)
+
+    if resume:
+        online_net.load_state_dict(torch.load('checkpoints/2020_06_14/dd0_r2d2_single_17:13:00/model.pt'))
+
     update_target_model(online_net, target_net)
 
     optimizer = optim.Adam(online_net.parameters(), lr=lr)
@@ -76,7 +81,10 @@ def main():
     target_net.train()
     memory = Memory(replay_memory_capacity)
     running_score = 0
-    epsilon = 1.0
+    if resume:
+        epsilon = epsilon_scratch
+    else:
+        epsilon = epsilon_resume
     steps = 0
     loss = 0
     local_buffer = LocalBuffer(num_inputs, hidden_size)
@@ -89,7 +97,7 @@ def main():
         state = env.reset()
         state = torch.Tensor(state).to(device)
 
-        hidden = (torch.Tensor().new_zeros(1, 1, 128), torch.Tensor().new_zeros(1, 1, 128))
+        hidden = (torch.Tensor().new_zeros(1, 1, hidden_size), torch.Tensor().new_zeros(1, 1, hidden_size))
 
         while not done:
             steps += 1
@@ -128,8 +136,8 @@ def main():
             # if did enough exploration and have enough data
             if steps > initial_exploration and len(memory) > batch_size:
                 # update epsilon
-                epsilon -= 0.00005
-                epsilon = max(epsilon, 0.1)
+                epsilon -= epsilon_step
+                epsilon = max(epsilon, epsilon_final)
 
                 # sample data (sequences) from memory and train model
                 batch, indexes, lengths = memory.sample(batch_size)
@@ -161,5 +169,52 @@ def main():
             break
 
 
+def evaluate():
+    env = Deepdrive2DEnv(is_intersection_map=False)
+    env.configure_env(env_config)
+
+    num_inputs = env.observation_space.shape[0]
+    num_actions = env.action_space.n
+    print('state size:', num_inputs)
+    print('action size:', num_actions)
+
+    hidden_size = 128
+
+    online_net = R2D2(num_inputs, num_actions, hidden_size)
+
+    online_net.load_state_dict(torch.load('checkpoints/2020_06_14/dd0_r2d2_single_17:13:00/model.pt'))
+
+    online_net.to(device)
+    online_net.eval()
+    
+    with torch.no_grad():
+    
+        score = 0
+        state = env.reset()
+
+        hidden = (torch.Tensor().new_zeros(1, 1, hidden_size), torch.Tensor().new_zeros(1, 1, hidden_size))
+
+        while True:
+            
+            state = torch.Tensor(state).to(device)
+
+            action, hidden = online_net.get_action(state, hidden)
+
+            # apply action
+            state, reward, done, info = env.step(action)
+
+            # add reward to score
+            score += reward
+
+            env.render()
+
+            if done:
+                # state = env.reset()
+                break
+
+        print(f'score:{score}')
+
+
 if __name__=="__main__":
-    main()
+    # main()
+    evaluate()

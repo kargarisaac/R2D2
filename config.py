@@ -1,46 +1,36 @@
 import torch
 import sys
-sys.path.append('/home/isaac/codes/deepdrive-zero/')
+sys.path.append('/home/kargarisaac/codes/deepdrive-zero/')
 from deepdrive_zero.constants import COMFORTABLE_STEERING_ACTIONS, \
     COMFORTABLE_ACTIONS
 
 
-# === for single agent ===========
-# gamma = 0.99
-# batch_size = 32
-# lr = 0.001
-# initial_exploration = 1000
-# goal_score = 200
-# log_interval = 10
-# update_target = 100
-# replay_memory_capacity = 1000
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# sequence_length = 32
-# burn_in_length = 4
-# eta = 0.9
-# local_mini_batch = 8
-# n_step = 2
-# over_lapping_length = 16
+resume = False
 
 
-# ====for self-play =============
 gamma = 0.99
 batch_size = 64
-lr = 0.0002
-initial_exploration = 10000
-goal_score = 100
+lr = 1e-4
+initial_exploration = 1e3
+goal_score = 200
 log_interval = 10
-update_target = 100
-replay_memory_capacity = 10000
+update_target = 2500
+replay_memory_capacity = int(1e5)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-sequence_length = 20
-burn_in_length = 4
+sequence_length = 30
+burn_in_length = 10
 eta = 0.9
 local_mini_batch = 8
-n_step = 4
+n_step = 5
 over_lapping_length = 16
+
+epsilon_scratch = 1.0
+epsilon_resume = 1.0
+epsilon_final = 0.01
+epsilon_step = 0.0001
+
+
 
 env_config = dict(
         id='deepdrive-2d-intersection-w-gs-allow-decel-v0',
@@ -59,7 +49,7 @@ env_config = dict(
         incent_win=True,
         incent_yield_to_oncoming_traffic=True,
         constrain_controls=False,
-        physics_steps_per_observation=12,
+        physics_steps_per_observation=6,
         contain_prev_actions_in_obs=True,
         discrete_actions=COMFORTABLE_ACTIONS,
         # dummy_accel_agent_indices=[1], #for opponent
