@@ -23,6 +23,11 @@ from deepdrive_zero.constants import COMFORTABLE_STEERING_ACTIONS, \
     COMFORTABLE_ACTIONS
 
 
+from gym.vector.async_vector_env import AsyncVectorEnv
+from gym.vector.sync_vector_env import SyncVectorEnv
+from gym.vector.vector_env import VectorEnv
+
+
 def get_action(state, target_net, epsilon, env, hidden):
     # epsilon greedy action selection
     action, hidden = target_net.get_action(state, hidden)
@@ -37,13 +42,68 @@ def update_target_model(online_net, target_net):
     target_net.load_state_dict(online_net.state_dict())
 
 
+def make_env(env_cls, num_envs=1, asynchronous=True, wrappers=None, env_config=None, **kwargs):
+    """Create a vectorized environment from multiple copies of an environment,
+    from its id
+    Parameters
+    ----------
+    id : str
+        The environment ID. This must be a valid ID from the registry.
+    num_envs : int
+        Number of copies of the environment.
+    asynchronous : bool (default: `True`)
+        If `True`, wraps the environments in an `AsyncVectorEnv` (which uses
+        `multiprocessing` to run the environments in parallel). If `False`,
+        wraps the environments in a `SyncVectorEnv`.
+
+    wrappers : Callable or Iterable of Callables (default: `None`)
+        If not `None`, then apply the wrappers to each internal
+        environment during creation.
+    Returns
+    -------
+    env : `gym.vector.VectorEnv` instance
+        The vectorized environment.
+    Example
+    -------
+    # >>> import gym
+    # >>> env = gym.vector.make('CartPole-v1', 3)
+    # >>> env.reset()
+    array([[-0.04456399,  0.04653909,  0.01326909, -0.02099827],
+           [ 0.03073904,  0.00145001, -0.03088818, -0.03131252],
+           [ 0.03468829,  0.01500225,  0.01230312,  0.01825218]],
+          dtype=float32)
+    """
+    from gym.envs import make as make_
+    def _make_env():
+        #         env = make_(id, **kwargs)
+        env = env_cls(is_intersection_map = env_config['is_intersection_map'])  # for self-play to have 2 learning agents
+        env.configure_env(env_config)
+
+        if wrappers is not None:
+            if callable(wrappers):
+                env = wrappers(env)
+            elif isinstance(wrappers, Iterable) and all([callable(w) for w in wrappers]):
+                for wrapper in wrappers:
+                    env = wrapper(env)
+            else:
+                raise NotImplementedError
+        return env
+
+    env_fns = [_make_env for _ in range(num_envs)]
+    return AsyncVectorEnv(env_fns) if asynchronous else SyncVectorEnv(env_fns)
+
+
+
+
+
 def main():
     # env = gym.make(env_name)
-    env = Deepdrive2DEnv(is_intersection_map=False)
-    env.configure_env(env_config)
+    # env = Deepdrive2DEnv(is_intersection_map=False)
+    # env.configure_env(env_config)
+    env = make_env(Deepdrive2DEnv, 5, asynchronous=True, env_config=env_config)
 
     #========= set path variables ============
-    algo_name = 'dd0_r2d2_single_'
+    algo_name = 'dd0_r2d2_parallel_'
     experiment_name = algo_name + str(datetime.datetime.today()).split(' ')[1].split('.')[0]
     yyyymmdd = datetime.datetime.today().strftime("%Y_%m_%d")
     experiment_name = os.path.join(yyyymmdd, experiment_name)
@@ -90,7 +150,7 @@ def main():
     local_buffer = LocalBuffer(num_inputs, hidden_size)
 
     #=========== training loop =============
-    for e in range(30000):
+    for e in range(1000):
         done = False
 
         score = 0

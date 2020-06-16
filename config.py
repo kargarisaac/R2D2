@@ -18,8 +18,8 @@ update_target = 2500
 replay_memory_capacity = int(1e5)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-sequence_length = 30
-burn_in_length = 10
+sequence_length = 32
+burn_in_length = 16
 eta = 0.9
 local_mini_batch = 8
 n_step = 5
@@ -27,9 +27,8 @@ over_lapping_length = 16
 
 epsilon_scratch = 1.0
 epsilon_resume = 1.0
-epsilon_final = 0.01
+epsilon_final = 0.01 #0.01
 epsilon_step = 0.0001
-
 
 
 env_config = dict(
@@ -38,9 +37,9 @@ env_config = dict(
         is_one_waypoint_map=False,
         expect_normalized_actions=True,
         expect_normalized_action_deltas=False,
-        jerk_penalty_coeff=3.3e-6 * 0,
+        jerk_penalty_coeff=3.3e-6 * 1,
         gforce_penalty_coeff=0.0006 * 0,
-        lane_penalty_coeff=0.01,  # 0.02,
+        lane_penalty_coeff=0.02,  # 0.02,
         collision_penalty_coeff=4,
         speed_reward_coeff=0.50,
         gforce_threshold=None, #1.0,
@@ -52,7 +51,5 @@ env_config = dict(
         physics_steps_per_observation=6,
         contain_prev_actions_in_obs=True,
         discrete_actions=COMFORTABLE_ACTIONS,
-        # dummy_accel_agent_indices=[1], #for opponent
-        # dummy_random_scenario=True,
         end_on_lane_violation=False
     )
