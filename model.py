@@ -5,10 +5,11 @@ import torch.nn.functional as F
 from config import gamma, device, batch_size, sequence_length, burn_in_length
 
 class R2D2(nn.Module):
-    def __init__(self, num_inputs, num_outputs, hidden_size=16):
+    def __init__(self, num_inputs, num_outputs, hidden_size=16, n_envs=1):
         super(R2D2, self).__init__()
         self.num_inputs = num_inputs
         self.num_outputs = num_outputs
+        self.n_envs = n_envs
 
         self.lstm = nn.LSTM(input_size=num_inputs, hidden_size=hidden_size, batch_first=True)
         self.fc = nn.Linear(hidden_size, hidden_size)
@@ -21,6 +22,11 @@ class R2D2(nn.Module):
 
     def forward(self, x, hidden=None):
         # x [batch_size, sequence_length, num_inputs]
+
+        if self.n_envs > 1:
+            if x.ndim == 2:
+                x = x.unsqueeze(1)
+
         batch_size = x.size()[0]
         sequence_length = x.size()[1]
         out, hidden = self.lstm(x, hidden)
@@ -96,9 +102,11 @@ class R2D2(nn.Module):
         return loss, td_error
 
     def get_action(self, state, hidden):
-        state = state.unsqueeze(0).unsqueeze(0)
+
+        # state = state.unsqueeze(0).unsqueeze(0)
+        # state = state.unsqueeze(0)
 
         qvalue, hidden = self.forward(state, hidden)
 
         _, action = torch.max(qvalue, 2)
-        return action.numpy()[0][0], hidden
+        return action.view(-1).numpy(), hidden

@@ -12,7 +12,7 @@ from model import R2D2
 from memory import Memory, LocalBuffer
 from tensorboardX import SummaryWriter
 
-from config import initial_exploration, batch_size, update_target, goal_score, log_interval, device, replay_memory_capacity, \
+from config import initial_exploration, batch_size, update_target, log_interval, device, replay_memory_capacity, \
  lr, sequence_length, local_mini_batch, env_config, resume, epsilon_scratch, epsilon_resume, epsilon_final, epsilon_step
 
 from collections import deque
@@ -76,7 +76,7 @@ def make_env(env_cls, num_envs=1, asynchronous=True, wrappers=None, env_config=N
     from gym.envs import make as make_
     def _make_env():
         #         env = make_(id, **kwargs)
-        env = env_cls(is_intersection_map = env_config['is_intersection_map'])  # for self-play to have 2 learning agents
+        env = env_cls(is_intersection_map = False)  # for self-play to have 2 learning agents
         env.configure_env(env_config)
 
         if wrappers is not None:
@@ -94,13 +94,17 @@ def make_env(env_cls, num_envs=1, asynchronous=True, wrappers=None, env_config=N
 
 
 
-
-
 def main():
-    # env = gym.make(env_name)
-    # env = Deepdrive2DEnv(is_intersection_map=False)
-    # env.configure_env(env_config)
-    env = make_env(Deepdrive2DEnv, 5, asynchronous=True, env_config=env_config)
+
+    n_envs = 100
+    
+    torch.manual_seed(500)
+    torch.set_num_threads(10)
+
+    hidden_size = 128
+    
+    env = make_env(Deepdrive2DEnv, n_envs, asynchronous=True, env_config=env_config)
+    env.seed(500)
 
     #========= set path variables ============
     algo_name = 'dd0_r2d2_parallel_'
@@ -114,18 +118,14 @@ def main():
         os.makedirs(base_checkpoint_path)
 
     #========= definitiions ==============
-    env.seed(500)
-    torch.manual_seed(500)
-
-    num_inputs = env.observation_space.shape[0]
-    num_actions = env.action_space.n
+    
+    num_inputs = env.observation_space.shape[1]
+    num_actions = env.action_space[0].n
     print('state size:', num_inputs)
     print('action size:', num_actions)
 
-    hidden_size = 128
-
-    online_net = R2D2(num_inputs, num_actions, hidden_size)
-    target_net = R2D2(num_inputs, num_actions, hidden_size)
+    online_net = R2D2(num_inputs, num_actions, hidden_size, n_envs)
+    target_net = R2D2(num_inputs, num_actions, hidden_size, n_envs)
 
     if resume:
         online_net.load_state_dict(torch.load('checkpoints/2020_06_15/dd0_r2d2_single_07:30:12/model.pt'))
@@ -140,93 +140,95 @@ def main():
     online_net.train()
     target_net.train()
     memory = Memory(replay_memory_capacity)
-    running_score = 0
+    
     if resume:
         epsilon = epsilon_resume
     else:
         epsilon = epsilon_scratch
-    steps = 0
-    loss = 0
-    local_buffer = LocalBuffer(num_inputs, hidden_size)
+    
+    local_buffer = LocalBuffer(num_inputs, hidden_size, n_envs)
 
     #=========== training loop =============
-    for e in range(1000):
-        done = False
+    
+    score = np.zeros(n_envs)
+    score_to_show = [] # a list to store rewards of done trajectories and take mean of them to show in tensorboard
+    state = env.reset()
+    hidden = (torch.Tensor().new_zeros(1, n_envs, hidden_size), torch.Tensor().new_zeros(1, n_envs, hidden_size)) #[number of layers, n_envs, hidden_size]
 
-        score = 0
-        state = env.reset()
+    for step in range(10_000_000):
+        
         state = torch.Tensor(state).to(device)
+        
+        # epsilon greedy action selection and get hidden from target net
+        action, new_hidden = get_action(state, target_net, epsilon, env, hidden)
+        action = np.array(action)
 
-        hidden = (torch.Tensor().new_zeros(1, 1, hidden_size), torch.Tensor().new_zeros(1, 1, hidden_size))
+        # apply action
+        next_state, reward, done, info = env.step(action)
 
-        while not done:
-            steps += 1
+        next_state = torch.Tensor(next_state)
 
-            # epsilon greedy action selection and get hidden from target net
-            action, new_hidden = get_action(state, target_net, epsilon, env, hidden)
+        mask = np.ones(n_envs) - done
+        
+        # store transitions for all envs
+        local_buffer.push(state, next_state, action, reward, mask, hidden)
 
-            # apply action
-            next_state, reward, done, info = env.step(action)
+        # update hidden
+        hidden = new_hidden
 
-            next_state = torch.Tensor(next_state)
+        # local_buffer.memory contains a couple of sequences of data -> if we collected enough sequences: 
+        if len(local_buffer.memory) >= local_mini_batch:
+            # get all collected sequences
+            batch, lengths = local_buffer.sample()
+            # calculate td_error
+            td_error = R2D2.get_td_error(online_net, target_net, batch, lengths)
+            # store data and calculated priority based on td_error in global memory(replay buffer)
+            memory.push(td_error, batch, lengths)
 
-            mask = 0 if done else 1
-            
-            # store transition
-            local_buffer.push(state, next_state, action, reward, mask, hidden)
+        # add reward to score
+        score += reward
+        for n in range(n_envs):
+            if done[n]:
+                hidden = list(hidden)
+                hidden[0][:, n, :] = torch.Tensor().new_zeros(1, 1, hidden_size)
+                hidden[1][:, n, :] = torch.Tensor().new_zeros(1, 1, hidden_size)
+                hidden = tuple(hidden)
+                score_to_show.append(score[n])
+                score[n] = 0
+                
+        # update state for next step
+        state = next_state
+        
+        # if did enough exploration and have enough data
+        if step > initial_exploration and len(memory) > batch_size:
+            # update epsilon
+            epsilon -= epsilon_step
+            epsilon = max(epsilon, epsilon_final)
 
-            # update hidden
-            hidden = new_hidden
+            # sample data (sequences) from memory and train model
+            batch, indexes, lengths = memory.sample(batch_size)
+            loss, td_error = R2D2.train_model(online_net, target_net, optimizer, batch, lengths)
 
-            # local_buffer.memory contains a couple of sequences of data -> if we collected enough sequences: 
-            if len(local_buffer.memory) == local_mini_batch:
-                # get all collected sequences
-                batch, lengths = local_buffer.sample()
-                # calculate td_error
-                td_error = R2D2.get_td_error(online_net, target_net, batch, lengths)
-                # store data and calculated priority based on td_error in global memory(replay buffer)
-                memory.push(td_error, batch, lengths)
+            # update priorities for replay buffer
+            memory.update_prior(indexes, td_error, lengths)
 
-            # add reward to score
-            score += reward
+            # update target net
+            if step % update_target == 0:
+                update_target_model(online_net, target_net)
 
-            # update state for next step
-            state = next_state
-            
-            # if did enough exploration and have enough data
-            if steps > initial_exploration and len(memory) > batch_size:
-                # update epsilon
-                epsilon -= epsilon_step
-                epsilon = max(epsilon, epsilon_final)
+        
+        if step % log_interval == 0:
+            print('{} step | score: {:.2f} | epsilon: {:.2f}'.format(
+                step, np.mean(score_to_show), epsilon))
+            writer.add_scalar('log/score', float(np.mean(score_to_show)), step)
+            writer.add_scalar('log/epsilon', float(epsilon), step)
 
-                # sample data (sequences) from memory and train model
-                batch, indexes, lengths = memory.sample(batch_size)
-                loss, td_error = R2D2.train_model(online_net, target_net, optimizer, batch, lengths)
-
-                # update priorities for replay buffer
-                memory.update_prior(indexes, td_error, lengths)
-
-                # update target net
-                if steps % update_target == 0:
-                    update_target_model(online_net, target_net)
-
-        # score = score if score == 500.0 else score + 1
-        if running_score == 0:
-            running_score = score
-        else:
-            running_score = 0.99 * running_score + 0.01 * score
-        if e % log_interval == 0:
-            print('{} episode | score: {:.2f} | epsilon: {:.2f}'.format(
-                e, running_score, epsilon))
-            writer.add_scalar('log/score', float(running_score), e)
-            writer.add_scalar('log/loss', float(loss), e)
+            score_to_show = [] # reset the list for next log step
 
             # save model and optimizer params
             torch.save(online_net.state_dict(), base_checkpoint_path + 'model.pt')
             torch.save(optimizer.state_dict(), base_checkpoint_path + 'optimizer.pt')
 
-        if running_score > goal_score:
-            break
 
 
 def evaluate():
@@ -275,6 +277,7 @@ def evaluate():
 	                break
 
 	        print(f'score:{score}')
+
 
 
 if __name__=="__main__":

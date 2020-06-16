@@ -8,10 +8,15 @@ Transition = namedtuple('Transition', ('state', 'next_state', 'action', 'reward'
 
 
 class LocalBuffer(object):
-    def __init__(self, observation_size, hidden_size):
+    def __init__(self, observation_size, hidden_size, n_envs=1):
         self.observation_size = observation_size
         self.hidden_size = hidden_size
-        self.n_step_memory = []
+        self.n_envs = n_envs
+
+        if n_envs > 1:
+            self.n_step_memory = [[] for n in range(n_envs)]
+        else:
+            self.n_step_memory = []
         self.local_memory = []
         self.memory = []
         self.over_lapping_from_prev = []
@@ -21,21 +26,41 @@ class LocalBuffer(object):
         push new data into n_step_memory and if it is full or if the episode is doen -> 
         creqate one sample from this n_step data and push it into local_memory
         """
-        self.n_step_memory.append([state, next_state, action, reward, mask, rnn_state])
+        if self.n_envs > 1:
+            for n in range(self.n_envs):
+                self.n_step_memory[n].append([state[n], next_state[n], action[n], reward[n], mask[n], tuple([rnn_state[0][:, n:n+1, :], rnn_state[1][:, n:n+1, :]])])
+        else:
+            self.n_step_memory.append([state, next_state, action, reward, mask, rnn_state])
 
-        # if we collected s_step transitions or if the episode is done -> creqate one sample from this n_step data and push it into local memory
-        if len(self.n_step_memory) == n_step or mask == 0:
-            [state, _, action, _, _, rnn_state] = self.n_step_memory[0]
-            [_, next_state, _, _, mask, _] = self.n_step_memory[-1]
+        # if we collected s_step transitions or if the episode is done -> creqate one sample from this n_step data and push it into local memory 
+        if self.n_envs > 1:
+            for n in range(self.n_envs):
+                if len(self.n_step_memory[n]) == n_step or mask[n] == 0.:
+                    [state, _, action, _, _, rnn_state] = self.n_step_memory[n][0]
+                    [_, next_state, _, _, mask2, _] = self.n_step_memory[n][-1]
 
-            sum_reward = 0
-            for t in reversed(range(len(self.n_step_memory))):
-                [_, _, _, reward, _, _] = self.n_step_memory[t]
-                sum_reward += reward + gamma * sum_reward
-            reward = sum_reward
-            step = len(self.n_step_memory)
-            self.push_local_memory(state, next_state, action, reward, mask, step, rnn_state)
-            self.n_step_memory = []
+                    sum_reward = 0
+                    for t in reversed(range(len(self.n_step_memory[n]))):
+                        [_, _, _, reward, _, _] = self.n_step_memory[n][t]
+                        sum_reward += reward + gamma * sum_reward
+                    reward = sum_reward
+                    step = len(self.n_step_memory[n])
+                    self.push_local_memory(state, next_state, action, reward, mask2, step, rnn_state)
+                    self.n_step_memory[n] = []
+
+        else:
+            if len(self.n_step_memory)  == n_step or mask == 0:
+                [state, _, action, _, _, rnn_state] = self.n_step_memory[0]
+                [_, next_state, _, _, mask, _] = self.n_step_memory[-1]
+
+                sum_reward = 0
+                for t in reversed(range(len(self.n_step_memory))):
+                    [_, _, _, reward, _, _] = self.n_step_memory[t]
+                    sum_reward += reward + gamma * sum_reward
+                reward = sum_reward
+                step = len(self.n_step_memory)
+                self.push_local_memory(state, next_state, action, reward, mask, step, rnn_state)
+                self.n_step_memory = []
 
     
     def push_local_memory(self, state, next_state, action, reward, mask, step, rnn_state):
@@ -55,7 +80,7 @@ class LocalBuffer(object):
                     0,
                     0,
                     0,
-                    torch.zeros([2, 1, 128]).view(2, -1)
+                    torch.zeros([2, 1, self.hidden_size]).view(2, -1)
                 ))
             self.memory.append([self.local_memory, length])
             if mask == 0:
