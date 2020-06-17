@@ -76,7 +76,7 @@ def make_env(env_cls, num_envs=1, asynchronous=True, wrappers=None, env_config=N
     from gym.envs import make as make_
     def _make_env():
         #         env = make_(id, **kwargs)
-        env = env_cls(is_intersection_map = False)  # for self-play to have 2 learning agents
+        env = env_cls(is_intersection_map = True)  # for self-play to have 2 learning agents
         env.configure_env(env_config)
 
         if wrappers is not None:
@@ -107,7 +107,7 @@ def main():
     env.seed(500)
 
     #========= set path variables ============
-    algo_name = 'dd0_r2d2_parallel_'
+    algo_name = 'dd0_r2d2_parallel_selfplay_'
     experiment_name = algo_name + str(datetime.datetime.today()).split(' ')[1].split('.')[0]
     yyyymmdd = datetime.datetime.today().strftime("%Y_%m_%d")
     experiment_name = os.path.join(yyyymmdd, experiment_name)
@@ -127,12 +127,15 @@ def main():
     online_net = R2D2(num_inputs, num_actions, hidden_size, n_envs)
     target_net = R2D2(num_inputs, num_actions, hidden_size, n_envs)
 
+    optimizer = optim.Adam(online_net.parameters(), lr=lr)
+
     if resume:
-        online_net.load_state_dict(torch.load('checkpoints/2020_06_15/dd0_r2d2_single_07:30:12/model.pt'))
+        checkpoint_path = 'checkpoints/2020_06_16/dd0_r2d2_parallel_selfplay_17:32:58/'
+        online_net.load_state_dict(torch.load(checkpoint_path + 'model.pt'))
+        optimizer.load_state_dict(torch.load(checkpoint_path + 'optimizer.pt'))
 
     update_target_model(online_net, target_net)
-
-    optimizer = optim.Adam(online_net.parameters(), lr=lr)
+    
     writer = SummaryWriter(log_dir)
 
     online_net.to(device)
@@ -155,7 +158,7 @@ def main():
     state = env.reset()
     hidden = (torch.Tensor().new_zeros(1, n_envs, hidden_size), torch.Tensor().new_zeros(1, n_envs, hidden_size)) #[number of layers, n_envs, hidden_size]
 
-    for step in range(10_000_000):
+    for step in range(100000):
         
         state = torch.Tensor(state).to(device)
         
@@ -232,7 +235,7 @@ def main():
 
 
 def evaluate():
-    env = Deepdrive2DEnv(is_intersection_map=False)
+    env = Deepdrive2DEnv(is_intersection_map=True)
     env.configure_env(env_config)
 
     num_inputs = env.observation_space.shape[0]
@@ -244,7 +247,7 @@ def evaluate():
 
     online_net = R2D2(num_inputs, num_actions, hidden_size)
 
-    online_net.load_state_dict(torch.load('checkpoints/2020_06_15/dd0_r2d2_single_07:30:12/model.pt'))
+    online_net.load_state_dict(torch.load('/home/kargarisaac/codes/R2D2/checkpoints/2020_06_17/dd0_r2d2_parallel_selfplay_04:27:57/model.pt'))
 
     online_net.to(device)
     online_net.eval()
@@ -262,7 +265,7 @@ def evaluate():
 	            
 	            state = torch.Tensor(state).to(device)
 
-	            action, hidden = online_net.get_action(state, hidden)
+	            action, hidden = online_net.get_action_eval(state, hidden)
 
 	            # apply action
 	            state, reward, done, info = env.step(action)
@@ -281,5 +284,5 @@ def evaluate():
 
 
 if __name__=="__main__":
-    main()
-    # evaluate()
+    # main()
+    evaluate()

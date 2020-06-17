@@ -110,3 +110,12 @@ class R2D2(nn.Module):
 
         _, action = torch.max(qvalue, 2)
         return action.view(-1).numpy(), hidden
+
+    def get_action_eval(self, state, hidden):
+        state = state.unsqueeze(0).unsqueeze(0)
+        # state = state.unsqueeze(0)
+
+        qvalue, hidden = self.forward(state, hidden)
+
+        _, action = torch.max(qvalue, 2)
+        return action.view(-1).numpy(), hidden

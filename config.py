@@ -5,13 +5,13 @@ from deepdrive_zero.constants import COMFORTABLE_STEERING_ACTIONS, \
     COMFORTABLE_ACTIONS
 
 
-resume = False
+resume = True
 
 gamma = 0.99
 batch_size = 32 #number of sequences to select
 lr = 1e-4
 initial_exploration = 2e3 # each one has n_envs sample -> total steps of initial exploration = initial_exploration * n_envs
-log_interval = 1000
+log_interval = 500
 update_target = 2500
 replay_memory_capacity = int(1e5) #it is independent of n_envs and put all data from all envs into one memory.
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -24,7 +24,7 @@ n_step = 5
 over_lapping_length = 10
 
 epsilon_scratch = 1.0
-epsilon_resume = 1.0
+epsilon_resume = 0.5
 epsilon_final = 0.05 #0.01
 epsilon_step = 0.0002
 
@@ -34,7 +34,7 @@ env_config = dict(
         is_one_waypoint_map=False,
         expect_normalized_actions=True,
         expect_normalized_action_deltas=False,
-        jerk_penalty_coeff=3.3e-6 * 0,
+        jerk_penalty_coeff=3.3e-6 * 1,
         gforce_penalty_coeff=0.0006 * 0,
         lane_penalty_coeff=0.01,  # 0.02,
         collision_penalty_coeff=4,
